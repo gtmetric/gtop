@@ -1,14 +1,14 @@
-# gtop
+# gtop: htop + nvtop for Windows
 
-**htop + nvtop in one terminal window, built for Windows.**
+**A terminal system monitor for Windows that shows CPU, memory, NVIDIA GPU usage and per-process VRAM in one window.**
 
-CPU cores, memory, NVIDIA GPU stats with history charts, and a sortable process list that shows each process's GPU usage and VRAM, all in htop's familiar colors and layout.
+gtop combines htop's CPU meters and process list with nvtop's GPU panel: usage and VRAM history charts, temperature, power and CUDA version. The process table shows each process's GPU% and VRAM, so you can see which process is using your GPU. It uses htop's familiar colors and layout.
 
-![gtop screenshot](docs/screenshot.svg)
+![gtop, a terminal system monitor for Windows, showing CPU meters, an NVIDIA GPU panel with usage and VRAM charts, and a process list with per-process GPU and VRAM columns](docs/screenshot.png)
 
 ## Why
 
-htop does not run on Windows, and the closest Windows alternatives don't show the GPU. nvtop shows the GPU but not much else. If you train models on a Windows machine, gtop shows both in one place: which process is using the GPU, how much VRAM it holds, and whether the CPU is the bottleneck.
+htop doesn't run on Windows, and nvtop targets Linux. Task Manager shows per-process GPU use, but not in a terminal, and you can't sort it alongside CPU in an htop-style view. If you train models on a Windows machine, gtop shows everything in one place: which process is using the GPU, how much VRAM it holds, and whether the CPU is the bottleneck.
 
 ## Features
 
@@ -83,6 +83,26 @@ gtop [-d DELAY] [-s {cpu,mem,gpu,vram,pid,name,user,thr}]
 - **The "running" count** is approximate, because Windows has no "R" process state. gtop counts processes that used at least 1% CPU in the last interval.
 - **Load average** is psutil's emulation, based on Windows' processor queue length. It often stays near zero even under heavy CPU load.
 - **Colors** come from your terminal's own 16-color palette, the same way htop does it.
+
+## FAQ
+
+**Is there htop for Windows?**
+htop runs on Linux, macOS and the BSDs, but not on Windows. gtop reproduces htop's interface on Windows (same meters, colors, sortable process list and F-key bar) and adds GPU monitoring.
+
+**Can I run nvtop on Windows?**
+nvtop targets Linux. gtop gives you an nvtop-style GPU panel on Windows: utilization and VRAM history charts, temperature, power, fan, clocks, and CUDA and driver versions.
+
+**How do I see which process is using my GPU or VRAM on Windows?**
+Run `gtop` and press `v` to sort by VRAM, or `g` to sort by GPU%. Per-process numbers come from the same Windows GPU performance counters Task Manager uses. `nvidia-smi` shows "N/A" for per-process memory under the default WDDM driver mode.
+
+**Does it work with AMD or Intel GPUs?**
+Partly. The per-process GPU% and VRAM columns come from Windows' own counters, which work with any GPU vendor. The GPU panel (charts, temperature, power, CUDA version) uses NVIDIA's NVML and only appears with an NVIDIA GPU.
+
+**Is it useful for deep learning / PyTorch training?**
+That's what it was built for. You can watch GPU utilization and VRAM over time, spot a data-loading bottleneck (busy CPU, idle GPU), and see each training process's VRAM, all in one terminal next to your training run.
+
+**Does it run on Linux?**
+gtop is built for Windows. It has psutil fallbacks for other platforms, but they're untested; on Linux, htop and nvtop are the real thing.
 
 ## License
 
