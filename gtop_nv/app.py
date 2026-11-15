@@ -1,4 +1,4 @@
-"""gtop: htop + nvtop in one terminal UI (Windows-friendly), in htop's default colours.
+"""gtop: htop + nvtop in one terminal UI for Windows, Linux and macOS, in htop's default colours.
 
 Keys: c/m/g/v/p/n sort by CPU/MEM/GPU%/VRAM/PID/Command (press again to flip),
 F6 cycle sort, F4 or / filter, Esc clear filter, F9 or k kill, space pause,
@@ -21,7 +21,7 @@ from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, DataTable, Footer, Input, Label, Static
 
-from .sampler import Sampler, Snapshot, fmt_bytes
+from .sampler import Sampler, Snapshot, fmt_bytes, gpu_count
 
 # htop's default colour scheme (CRT.c, COLORSCHEME_DEFAULT), drawn with the
 # terminal's own ANSI palette, exactly as htop does.
@@ -183,7 +183,7 @@ def history_chart(values: list[float], height: int, width: int, top: str, mid: s
         b = rows - 1 - r  # row index counted from the bottom
         if r == 0:
             lab = top
-        elif rows >= 3 and b == rows // 2:
+        elif rows >= 5 and b == rows // 2:  # short charts: top label only, or it looks cramped
             lab = mid
         else:
             lab = ""
@@ -234,7 +234,7 @@ class GpuPanel(Widget):
         if s is None:
             return Text("sampling…", style=C_SHADOW)
         if not s.gpus:
-            return Text("No NVIDIA GPU found (NVML unavailable)", style=C_SHADOW)
+            return Text("No supported GPU found (NVIDIA via NVML, or Apple GPU on macOS)", style=C_SHADOW)
         out = Text()
         chart_h = self._lines_per_gpu(w) - self.FIXED_LINES
         for g in s.gpus:
@@ -464,17 +464,8 @@ class GTop(App):
         self.busy = False
         self.snap: Snapshot | None = None
         self.sampler: Sampler | None = None
-        self.ngpus = self._count_gpus()
+        self.ngpus = gpu_count()
         self.timer = None
-
-    @staticmethod
-    def _count_gpus() -> int:
-        try:
-            import pynvml
-            pynvml.nvmlInit()
-            return pynvml.nvmlDeviceGetCount()
-        except Exception:
-            return 0
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="top"):
@@ -707,7 +698,7 @@ class GTop(App):
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="htop + nvtop for Windows")
+    ap = argparse.ArgumentParser(description="htop + nvtop in one terminal UI")
     ap.add_argument("-d", "--delay", type=float, default=1.5, help="refresh interval in seconds (default 1.5)")
     ap.add_argument("-s", "--sort", choices=SORT_CYCLE + ["user", "thr"], default="cpu")
     a = ap.parse_args()

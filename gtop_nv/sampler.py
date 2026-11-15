@@ -1,12 +1,13 @@
 """Data layer for gtop: CPU / memory / GPU / per-process sampling, no UI.
 
-Run `python -m gtop.sampler --once` for a plain-text dump (useful for sanity checks).
+Run `python -m gtop_nv.sampler --once` for a plain-text dump (useful for sanity checks).
 """
 from __future__ import annotations
 
 import argparse
 import os
 import re
+import sys
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -237,6 +238,58 @@ class _WinCpuTimes:
         return self.last
 
 
+class _MacGpu:
+    """Apple GPU stats on macOS without sudo, from the IOAccelerator registry
+    entries (`ioreg -r -d 1 -w 0 -c IOAccelerator`). Their PerformanceStatistics
+    dictionary carries "Device Utilization %" and "In use system memory".
+    Apple Silicon GPUs use unified memory, so total = system RAM.
+    No temperature / power / per-process data: those need sudo (powermetrics)."""
+
+    _MODEL = re.compile(r'"model" = <?"([^"]+)"')
+    _UTIL = re.compile(r'"Device Utilization %"=(\d+)')
+    _MEM = re.compile(r'"In use system memory"=(\d+)')
+    _VRAM_MB = re.compile(r'"VRAM,totalMB" = (\d+)')
+    _CORES = re.compile(r'"gpu-core-count" = (\d+)')
+
+    def read(self) -> list[GpuInfo]:
+        import subprocess
+        out = subprocess.run(["ioreg", "-r", "-d", "1", "-w", "0", "-c", "IOAccelerator"],
+                             capture_output=True, text=True, timeout=3).stdout
+        gpus = []
+        for block in re.split(r"^\+-o ", out, flags=re.M):
+            util = self._UTIL.search(block)
+            if not util:
+                continue
+            m = self._MODEL.search(block)
+            name = m.group(1) if m else "Apple GPU"
+            cores = self._CORES.search(block)
+            if cores:
+                name += f" ({cores.group(1)}-core)"
+            g = GpuInfo(index=len(gpus), name=name, util=float(util.group(1)))
+            mem = self._MEM.search(block)
+            vram = self._VRAM_MB.search(block)
+            if mem:
+                g.mem_used = int(mem.group(1))
+                g.mem_total = int(vram.group(1)) * 2**20 if vram else psutil.virtual_memory().total
+            gpus.append(g)
+        return gpus
+
+
+def gpu_count() -> int:
+    """Number of GPUs the GPU panel will show (NVIDIA via NVML, or Apple via ioreg)."""
+    if pynvml is not None:
+        try:
+            pynvml.nvmlInit()
+            n = pynvml.nvmlDeviceGetCount()
+            if n:
+                return n
+        except Exception:
+            pass
+    if sys.platform == "darwin":
+        return len(_try(_MacGpu().read, []) or [])
+    return 0
+
+
 class Sampler:
     HIST = 300
 
@@ -271,6 +324,11 @@ class Sampler:
         self.pdh = None
         if win32pdh is not None:
             self.pdh = _try(_PdhGpuProcs)
+
+        self.mac_gpu = None
+        if not self.handles and sys.platform == "darwin":
+            m = _MacGpu()
+            self.mac_gpu = m if _try(m.read) else None
 
         self.win = _try(_WinProcScan) if os.name == "nt" else None
         self.cpu_times = _try(lambda: _WinCpuTimes(self.ncores)) if os.name == "nt" else None
@@ -310,6 +368,16 @@ class Sampler:
         return c
 
     def _gpus(self) -> list[GpuInfo]:
+        gpus = self._gpus_nvml() if self.handles else (self.mac_gpu.read() if self.mac_gpu else [])
+        for g in gpus:
+            uh = self._util_hist.setdefault(g.index, deque(maxlen=self.HIST))
+            mh = self._mem_hist.setdefault(g.index, deque(maxlen=self.HIST))
+            uh.append(g.util or 0.0)
+            mh.append(100.0 * g.mem_used / g.mem_total if g.mem_used and g.mem_total else 0.0)
+            g.util_hist, g.mem_hist = list(uh), list(mh)
+        return gpus
+
+    def _gpus_nvml(self) -> list[GpuInfo]:
         out = []
         for i, h in enumerate(self.handles):
             g = GpuInfo(index=i, name=self.gpu_names[i])
@@ -326,11 +394,6 @@ class Sampler:
             g.fan = _try(lambda: pynvml.nvmlDeviceGetFanSpeed(h))
             g.sm_clock = _try(lambda: pynvml.nvmlDeviceGetClockInfo(h, pynvml.NVML_CLOCK_SM))
             g.mem_clock = _try(lambda: pynvml.nvmlDeviceGetClockInfo(h, pynvml.NVML_CLOCK_MEM))
-            uh = self._util_hist.setdefault(i, deque(maxlen=self.HIST))
-            mh = self._mem_hist.setdefault(i, deque(maxlen=self.HIST))
-            uh.append(g.util or 0.0)
-            mh.append(100.0 * g.mem_used / g.mem_total if g.mem_used and g.mem_total else 0.0)
-            g.util_hist, g.mem_hist = list(uh), list(mh)
             out.append(g)
         return out
 
@@ -356,9 +419,16 @@ class Sampler:
             per_core = [r[0] for r in rows]
             split = [tuple(r[1:]) for r in rows]
         else:
-            ctp = psutil.cpu_times_percent(percpu=True)
-            split = [(c.user, c.system, getattr(c, "irq", 0.0), getattr(c, "softirq", 0.0)) for c in ctp]
-            per_core = [max(0.0, 100.0 - c.idle) for c in ctp]
+            # Linux / macOS. Like htop's default (non-detailed) mode, nice time is
+            # drawn as user and steal/guest as system, and iowait counts as idle,
+            # so the bar segments add up to the percentage shown.
+            split, per_core = [], []
+            for c in psutil.cpu_times_percent(percpu=True):
+                user = c.user + getattr(c, "nice", 0.0)
+                system = c.system + getattr(c, "steal", 0.0)
+                irq, softirq = getattr(c, "irq", 0.0), getattr(c, "softirq", 0.0)
+                split.append((user, system, irq, softirq))
+                per_core.append(min(100.0, user + system + irq + softirq))
         gpus = self._gpus()
 
         if self.pdh is not None:
@@ -444,7 +514,7 @@ def _dump():
     print(f"MEM {fmt_bytes(snap.mem.used)}/{fmt_bytes(snap.mem.total)}  SWAP {fmt_bytes(snap.swap.used)}/{fmt_bytes(snap.swap.total)}")
     for g in snap.gpus:
         print(f"GPU{g.index} {g.name}: util {g.util}% vram {fmt_bytes(g.mem_used)}/{fmt_bytes(g.mem_total)} "
-              f"temp {g.temp}C power {g.power_w:.0f}/{g.power_limit_w:.0f}W fan {g.fan}% sm {g.sm_clock}MHz")
+              f"temp {g.temp}C power {g.power_w}/{g.power_limit_w}W fan {g.fan}% sm {g.sm_clock}MHz")
     print("\nTop by CPU:")
     for p in sorted(snap.procs, key=lambda p: p.cpu, reverse=True)[:8]:
         print(f"  {p.pid:>7} {p.user:<10} cpu {p.cpu:5.1f} mem {fmt_bytes(p.rss):>7} gpu {p.gpu_util or 0:5.1f}% vram {fmt_bytes(p.gpu_mem):>7}  {p.cmd[:60]}")

@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        python: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: python -m pip install . pytest
+      - name: Sample once (smoke test)
+        run: python -m gtop_nv.sampler --once
+      - name: Show Apple GPU registry data (macOS)
+        if: runner.os == 'macOS'
+        run: ioreg -r -d 1 -w 0 -c IOAccelerator | grep -E '"model"|gpu-core-count|PerformanceStatistics' || true
+      - name: Tests
+        run: python -m pytest -q tests
