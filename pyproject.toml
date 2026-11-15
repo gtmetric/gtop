@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gtop"
+dynamic = ["version"]
+description = "htop + nvtop in one terminal UI, built for Windows"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Soksedtha Ly" }]
+requires-python = ">=3.10"
+dependencies = [
+    "psutil>=7.0",
+    "nvidia-ml-py>=12.0",
+    "textual>=8.0",
+    "pywin32>=306; sys_platform == 'win32'",
+]
+classifiers = [
+    "Environment :: Console :: Curses",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Monitoring",
+]
+
+[project.scripts]
+gtop = "gtop.app:main"
+
+[tool.hatch.version]
+path = "gtop/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/docs", "/.venv"]
+
+[project.urls]
+Homepage = "https://github.com/gtmetric/gtop"
