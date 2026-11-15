@@ -261,6 +261,11 @@ class GpuPanel(Widget):
                 parts.append(("Fan: ", [(f"{g.fan}%", C_VALUE)]))
             if g.sm_clock is not None:
                 parts.append(("Clock: ", [(f"{g.sm_clock}", "bold white"), ("MHz", "white")]))
+            extra_styles = ("bold white", "bold green", "bold cyan")
+            for j, (key, val) in enumerate(g.extra):
+                parts.append((key, [(val, extra_styles[j % len(extra_styles)])]))
+            if not parts:
+                parts.append(("", [("Temperature and power not available on this platform", C_SHADOW)]))
             for i, (key, vals) in enumerate(parts):
                 if i:
                     out.append("  ")

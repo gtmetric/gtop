@@ -31,6 +31,8 @@ def test_mac_gpu_parser(monkeypatch):
     assert g.util == 37.0
     assert g.mem_used == 2 * 2**30  # "(driver)" key must not be picked up instead
     assert g.mem_total and g.mem_total > 0
+    # The info line gets Renderer / Tiler / unified memory instead of temp & power.
+    assert g.extra == [("Renderer: ", "9%"), ("Tiler: ", "10%"), ("Memory: ", "unified")]
 
 
 def test_sampler_snapshot():
