@@ -131,3 +131,18 @@ def test_gpu_panel_hidden_without_gpu(monkeypatch):
             assert app.table.row_count > 0
 
     asyncio.run(run())
+
+
+def test_command_column_matches_htop(monkeypatch):
+    """Linux/macOS show the full command line like htop; Windows shortens the exe path."""
+    class P:
+        def cmdline(self):
+            return ["/usr/libexec/trustd", "--agent"]
+
+    s = S.Sampler.__new__(S.Sampler)
+    s._cmd_cache = {}
+    monkeypatch.setattr(S.os, "name", "posix")
+    assert s._cmd(P(), (1, 0.0), "trustd") == "/usr/libexec/trustd --agent"
+    s._cmd_cache = {}
+    monkeypatch.setattr(S.os, "name", "nt")
+    assert s._cmd(P(), (1, 0.0), "trustd") == "trustd --agent"

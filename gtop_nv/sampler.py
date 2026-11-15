@@ -359,11 +359,15 @@ class Sampler:
             if isinstance(p, int):
                 p = _try(lambda: psutil.Process(p))
             parts = _try(p.cmdline, None) if p is not None else None
-            if parts:
+            if parts and os.name == "nt":
+                # Windows paths are long (C:\Program Files\...): show the exe name + args.
                 exe = os.path.basename(parts[0]) or name
                 c = " ".join([exe] + parts[1:]).strip()
+            elif parts:
+                # Linux / macOS: the full command line as started, like htop.
+                c = " ".join(parts).strip() or name
             else:
-                c = name
+                c = name  # args not readable (e.g. another user's process on macOS)
             self._cmd_cache[key] = c
         return c
 
