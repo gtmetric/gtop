@@ -236,8 +236,9 @@ class GpuPanel(Widget):
         if not s.gpus:
             return Text("No supported GPU found (NVIDIA via NVML, or Apple GPU on macOS)", style=C_SHADOW)
         out = Text()
-        chart_h = self._lines_per_gpu(w) - self.FIXED_LINES
+        base_chart_h = self._lines_per_gpu(w) - self.FIXED_LINES
         for g in s.gpus:
+            chart_h = base_chart_h
             out.append(f"GPU{g.index}: ", style=C_TEXT)
             # Value colours rotate through htop's TasksMeter / LoadAverage palette
             # (bold white, bold cyan, bold green, green) so each field stands apart.
@@ -261,18 +262,18 @@ class GpuPanel(Widget):
                 parts.append(("Fan: ", [(f"{g.fan}%", C_VALUE)]))
             if g.sm_clock is not None:
                 parts.append(("Clock: ", [(f"{g.sm_clock}", "bold white"), ("MHz", "white")]))
-            extra_styles = ("bold white", "bold green", "bold cyan")
-            for j, (key, val) in enumerate(g.extra):
-                parts.append((key, [(val, extra_styles[j % len(extra_styles)])]))
-            if not parts:
-                parts.append(("", [("Temperature and power not available on this platform", C_SHADOW)]))
-            for i, (key, vals) in enumerate(parts):
-                if i:
-                    out.append("  ")
-                out.append(key, style=C_TEXT)
-                for txt, st in vals:
-                    out.append(txt, style=st)
-            out.append("\n")
+            if parts:
+                for i, (key, vals) in enumerate(parts):
+                    if i:
+                        out.append("  ")
+                    out.append(key, style=C_TEXT)
+                    for txt, st in vals:
+                        out.append(txt, style=st)
+                out.append("\n")
+            else:
+                # No temp / power / fan / clock here (e.g. Apple GPUs without sudo):
+                # drop the line and give the row to the charts.
+                chart_h += 1
             util = g.util or 0.0
             out.append_text(meter("GPU", [(util / 100, C_USER)], w, f"{util:.1f}%"))
             out.append("\n")
@@ -475,7 +476,8 @@ class GTop(App):
     def compose(self) -> ComposeResult:
         with Horizontal(id="top"):
             yield CpuPanel(id="cpu")
-            yield GpuPanel(self.ngpus, psutil.cpu_count(logical=True) or 1, id="gpu")
+            if self.ngpus:  # no supported GPU: no panel, the CPU meters take the full width
+                yield GpuPanel(self.ngpus, psutil.cpu_count(logical=True) or 1, id="gpu")
         yield Static(id="status")
         yield ProcTable(id="procs", cursor_type="row", zebra_stripes=False,
                         cursor_foreground_priority="css", cursor_background_priority="css")
@@ -512,11 +514,13 @@ class GTop(App):
 
     def apply(self, snap: Snapshot) -> None:
         self.snap = snap
-        cpu, gpu = self.query_one(CpuPanel), self.query_one(GpuPanel)
-        cpu.snap = gpu.snap = snap
-        gpu.interval = self.interval
+        cpu = self.query_one(CpuPanel)
+        cpu.snap = snap
         cpu.refresh(layout=True)
-        gpu.refresh(layout=True)
+        for gpu in self.query(GpuPanel):  # absent when there's no supported GPU
+            gpu.snap = snap
+            gpu.interval = self.interval
+            gpu.refresh(layout=True)
         self._refresh_table()
         self._update_status()
 

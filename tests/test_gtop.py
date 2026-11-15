@@ -31,8 +31,30 @@ def test_mac_gpu_parser(monkeypatch):
     assert g.util == 37.0
     assert g.mem_used == 2 * 2**30  # "(driver)" key must not be picked up instead
     assert g.mem_total and g.mem_total > 0
-    # The info line gets Renderer / Tiler / unified memory instead of temp & power.
-    assert g.extra == [("Renderer: ", "9%"), ("Tiler: ", "10%"), ("Memory: ", "unified")]
+    assert g.temp is None and g.power_w is None  # so the panel drops its info line
+
+
+def test_gpu_panel_gives_info_row_to_charts():
+    """Without temp/power/fan/clock (Apple GPUs), the info line is dropped and the
+    panel stays the same height because each chart gets one more row."""
+    from textual.geometry import Size
+    from gtop_nv.app import GpuPanel
+
+    def lines(gpu):
+        snap = S.Snapshot(time=0, cpu_per_core=[0.0] * 8, cpu_total=0.0, cpu_split=[(0.0,) * 4] * 8,
+                          load_avg=(0.0, 0.0, 0.0), threads=0, mem=None, swap=None, uptime=0.0,
+                          gpus=[gpu], procs=[], gpu_proc_source="none")
+        p = GpuPanel(1, 8)
+        p.snap = snap
+        GpuPanel.content_size = property(lambda self: Size(70, 12))
+        return p.render().plain.splitlines()
+
+    mac = S.GpuInfo(index=0, name="Apple M1 Pro", util=10.0, mem_used=2**30, mem_total=16 * 2**30)
+    nv = S.GpuInfo(index=0, name="RTX", util=10.0, mem_used=2**30, mem_total=16 * 2**30, temp=50)
+    mac_lines, nv_lines = lines(mac), lines(nv)
+    assert len(mac_lines) == len(nv_lines)
+    assert not any("Temp:" in l for l in mac_lines)
+    assert sum("│" in l or "┤" in l for l in mac_lines) == sum("│" in l or "┤" in l for l in nv_lines) + 1
 
 
 def test_sampler_snapshot():
@@ -84,3 +106,21 @@ def test_app_sorts_filters_and_quits():
 
     app = asyncio.run(run())
     assert not app.is_running
+
+
+def test_gpu_panel_hidden_without_gpu(monkeypatch):
+    from gtop_nv import app as A
+
+    monkeypatch.setattr(A, "gpu_count", lambda: 0)
+    monkeypatch.setattr(S.Sampler, "_gpus", lambda self: [])
+
+    async def run():
+        app = A.GTop(interval=0.5)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(1.5)
+            assert not app.query(A.GpuPanel)
+            cpu = app.query_one(A.CpuPanel)
+            assert cpu.size.width > 120  # CPU meters take the full width
+            assert app.table.row_count > 0
+
+    asyncio.run(run())

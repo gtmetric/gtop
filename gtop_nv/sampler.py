@@ -41,8 +41,6 @@ class GpuInfo:
     mem_clock: int | None = None
     util_hist: list[float] = field(default_factory=list)
     mem_hist: list[float] = field(default_factory=list)
-    # Platform-specific stats for the GPU info line, as (label, value) pairs.
-    extra: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -252,8 +250,6 @@ class _MacGpu:
     _MEM = re.compile(r'"In use system memory"=(\d+)')
     _VRAM_MB = re.compile(r'"VRAM,totalMB" = (\d+)')
     _CORES = re.compile(r'"gpu-core-count" = (\d+)')
-    _RENDERER = re.compile(r'"Renderer Utilization %"=(\d+)')
-    _TILER = re.compile(r'"Tiler Utilization %"=(\d+)')
 
     def read(self) -> list[GpuInfo]:
         import subprocess
@@ -275,13 +271,6 @@ class _MacGpu:
             if mem:
                 g.mem_used = int(mem.group(1))
                 g.mem_total = int(vram.group(1)) * 2**20 if vram else psutil.virtual_memory().total
-            # Temperature / power need sudo, so show the pipeline stages instead.
-            for label, rx in (("Renderer: ", self._RENDERER), ("Tiler: ", self._TILER)):
-                v = rx.search(block)
-                if v:
-                    g.extra.append((label, f"{v.group(1)}%"))
-            if mem and not vram:
-                g.extra.append(("Memory: ", "unified"))
             gpus.append(g)
         return gpus
 
