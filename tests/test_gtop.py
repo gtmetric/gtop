@@ -34,7 +34,7 @@ def test_mac_gpu_parser(monkeypatch):
     assert g.temp is None and g.power_w is None  # so the panel drops its info line
 
 
-def test_gpu_panel_gives_info_row_to_charts():
+def test_gpu_panel_gives_info_row_to_charts(monkeypatch):
     """Without temp/power/fan/clock (Apple GPUs), the info line is dropped and the
     panel stays the same height because each chart gets one more row."""
     from textual.geometry import Size
@@ -46,7 +46,7 @@ def test_gpu_panel_gives_info_row_to_charts():
                           gpus=[gpu], procs=[], gpu_proc_source="none")
         p = GpuPanel(1, 8)
         p.snap = snap
-        GpuPanel.content_size = property(lambda self: Size(70, 12))
+        monkeypatch.setattr(GpuPanel, "content_size", property(lambda self: Size(70, 12)))
         return p.render().plain.splitlines()
 
     mac = S.GpuInfo(index=0, name="Apple M1 Pro", util=10.0, mem_used=2**30, mem_total=16 * 2**30)
@@ -82,11 +82,18 @@ def test_history_chart_shape():
     assert lines[-1].plain.strip().startswith("0└")
 
 
+async def wait_for_rows(app, pilot, timeout=15.0):
+    """The first sample takes a while on slow CI runners: wait for it instead of a fixed pause."""
+    deadline = time.monotonic() + timeout
+    while app.table.row_count == 0 and time.monotonic() < deadline:
+        await pilot.pause(0.2)
+
+
 def test_app_sorts_filters_and_quits():
     async def run():
         app = GTop(interval=0.5)
         async with app.run_test(size=(140, 45)) as pilot:
-            await pilot.pause(2.0)
+            await wait_for_rows(app, pilot)
             assert app.table.row_count > 0
             await pilot.press("m")
             assert app.sort_key == "mem" and app.sort_desc
@@ -117,7 +124,7 @@ def test_gpu_panel_hidden_without_gpu(monkeypatch):
     async def run():
         app = A.GTop(interval=0.5)
         async with app.run_test(size=(140, 45)) as pilot:
-            await pilot.pause(1.5)
+            await wait_for_rows(app, pilot)
             assert not app.query(A.GpuPanel)
             cpu = app.query_one(A.CpuPanel)
             assert cpu.size.width > 120  # CPU meters take the full width
